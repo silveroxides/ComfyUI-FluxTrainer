@@ -69,10 +69,10 @@ def svd(
         open_fn = lambda fn: MemoryEfficientSafeOpen(fn)
 
     with open_fn(model_org) as fo:
-        # filter keys
+        # filter keys or "img_in" in key 
         keys = []
         for key in fo.keys():
-            if not ("single_block" in key or "double_block" in key):
+            if not ("single_block" in key or "double_block" in key or "final_layer" in key or "txt_in" in key or "img_in" in key or "distilled_guidance_layer" in key):
                 continue
             if ".bias" in key:
                 continue

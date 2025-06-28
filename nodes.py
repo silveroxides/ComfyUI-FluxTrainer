@@ -1727,10 +1727,19 @@ class ExtractFluxLoRA:
         from .flux_extract_lora import svd
         transformer_path = folder_paths.get_full_path("unet", original_model)
         finetuned_model_path = folder_paths.get_full_path("unet", finetuned_model)
+        print(output_path)
+        if not os.path.exists(output_path):
+            raise RuntimeError(f"The path '{output_path}' does not exist.")
+        if not os.path.isdir(output_path):
+            raise RuntimeError(f"'{output_path}' is not a directory.")
+        if not os.access(output_path, os.R_OK):
+            raise RuntimeError(f"You do not have read permissions for '{output_path}'.")
+        save_to = os.path.join(output_path, f"{finetuned_model.replace('.safetensors', '')}_extracted_lora_rank_{dim}-{save_dtype}.safetensors")
+        print(save_to)
         outpath = svd(
             model_org = transformer_path,
             model_tuned = finetuned_model_path,
-            save_to = os.path.join(output_path, f"{finetuned_model.replace('.safetensors', '')}_extracted_lora_rank_{dim}-{save_dtype}.safetensors"),
+            save_to = save_to,
             dim = dim,
             device = load_device,
             store_device = store_device,
