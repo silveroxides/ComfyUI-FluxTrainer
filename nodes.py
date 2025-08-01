@@ -53,7 +53,7 @@ class FluxTrainModelSelect:
     CATEGORY = "FluxTrainer"
 
     def loadmodel(self, transformer, vae, clip_l, t5, lora_path=""):
-        
+
         transformer_path = folder_paths.get_full_path("unet", transformer)
         vae_path = folder_paths.get_full_path("vae", vae)
         clip_path = folder_paths.get_full_path("clip", clip_l)
@@ -66,7 +66,7 @@ class FluxTrainModelSelect:
             "t5": t5_path,
             "lora_path": lora_path
         }
-        
+
         return (flux_models,)
 
 class TrainDatasetGeneralConfig:
@@ -98,7 +98,7 @@ class TrainDatasetGeneralConfig:
     CATEGORY = "FluxTrainer"
 
     def create_config(self, shuffle_caption, caption_dropout_rate, color_aug, flip_aug, alpha_mask, reset_on_queue=False, caption_extension=".txt"):
-        
+
         dataset = {
            "general": {
                 "shuffle_caption": shuffle_caption,
@@ -119,7 +119,7 @@ class TrainDatasetGeneralConfig:
         return (dataset_config,)
 
 class TrainDatasetRegularization:
-        
+
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
@@ -135,20 +135,20 @@ class TrainDatasetRegularization:
     CATEGORY = "FluxTrainer"
 
     def create_config(self, dataset_path, class_tokens, num_repeats):
-        
+
         reg_subset = {
                     "image_dir": dataset_path,
                     "class_tokens": class_tokens,
                     "num_repeats": num_repeats,
                     "is_reg": True
                 }
-       
+
         return reg_subset,
-    
+
 class TrainDatasetAdd:
     def __init__(self):
         self.previous_dataset_signature = None
-        
+
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
@@ -174,9 +174,9 @@ class TrainDatasetAdd:
     FUNCTION = "create_config"
     CATEGORY = "FluxTrainer"
 
-    def create_config(self, dataset_config, dataset_path, class_tokens, width, height, batch_size, num_repeats, enable_bucket,  
+    def create_config(self, dataset_config, dataset_path, class_tokens, width, height, batch_size, num_repeats, enable_bucket,
                   bucket_no_upscale, min_bucket_reso, max_bucket_reso, regularization=None):
-        
+
         new_dataset = {
             "resolution": (width, height),
             "batch_size": batch_size,
@@ -283,9 +283,9 @@ class OptimizerConfigAdafactor:
             ]
         kwargs["optimizer_args"] = node_args + extra_args
         kwargs["min_snr_gamma"] = min_snr_gamma if min_snr_gamma != 0.0 else None
-        
+
         return (kwargs,)
-    
+
 class FluxTrainerLossConfig:
     @classmethod
     def INPUT_TYPES(s):
@@ -304,7 +304,7 @@ class FluxTrainerLossConfig:
 
     def create_config(self, **kwargs):
         return (kwargs,)
-    
+
 class OptimizerConfigProdigy:
     @classmethod
     def INPUT_TYPES(s):
@@ -337,7 +337,7 @@ class OptimizerConfigProdigy:
             ]
         kwargs["optimizer_args"] = node_args + extra_args
         kwargs["min_snr_gamma"] = min_snr_gamma if min_snr_gamma != 0.0 else None
-        
+
         return (kwargs,)
 
 class TrainNetworkConfig:
@@ -357,7 +357,7 @@ class TrainNetworkConfig:
     CATEGORY = "FluxTrainer"
 
     def create_config(self, network_type, extra_network_args, lycoris_preset, factor):
-  
+
         extra_args = [arg.strip() for arg in extra_network_args.strip().split('|') if arg.strip()]
 
         if network_type == "lora":
@@ -381,9 +381,9 @@ class TrainNetworkConfig:
             "network_module": network_module,
             "network_args": network_args + extra_args
         }
-        
+
         return (network_config,)
-    
+
 class OptimizerConfigProdigyPlusScheduleFree:
     @classmethod
     def INPUT_TYPES(s):
@@ -423,8 +423,8 @@ class OptimizerConfigProdigyPlusScheduleFree:
             ]
         kwargs["optimizer_args"] = node_args + extra_args
         kwargs["min_snr_gamma"] = min_snr_gamma if min_snr_gamma != 0.0 else None
-        
-        return (kwargs,)    
+
+        return (kwargs,)
 
 class InitFluxLoRATraining:
     @classmethod
@@ -480,20 +480,20 @@ class InitFluxLoRATraining:
     FUNCTION = "init_training"
     CATEGORY = "FluxTrainer"
 
-    def init_training(self, flux_models, dataset, optimizer_settings, sample_prompts, output_name, attention_mode, 
-                      gradient_dtype, save_dtype, additional_args=None, resume_args=None, train_text_encoder='disabled', 
+    def init_training(self, flux_models, dataset, optimizer_settings, sample_prompts, output_name, attention_mode,
+                      gradient_dtype, save_dtype, additional_args=None, resume_args=None, train_text_encoder='disabled',
                       block_args=None, gradient_checkpointing="enabled", prompt=None, extra_pnginfo=None, clip_l_lr=0, T5_lr=0, loss_args=None, network_config=None, **kwargs):
         mm.soft_empty_cache()
-        
+
         output_dir = os.path.abspath(kwargs.get("output_dir"))
         os.makedirs(output_dir, exist_ok=True)
-    
+
         total, used, free = shutil.disk_usage(output_dir)
- 
+
         required_free_space = 2 * (2**30)
         if free <= required_free_space:
             raise ValueError(f"Insufficient disk space. Required: {required_free_space/2**30}GB. Available: {free/2**30}GB")
-        
+
         dataset_config = dataset["datasets"]
         dataset_toml = toml.dumps(json.loads(dataset_config))
 
@@ -602,19 +602,19 @@ class InitFluxLoRATraining:
 
         #network args
         additional_network_args = []
-        
+
         if "T5" in train_text_encoder:
             additional_network_args.append("train_t5xxl=True")
-       
+
         if block_args:
             additional_network_args.append(block_args["include"])
-        
+
         # Handle network_args in args Namespace
         if hasattr(args, 'network_args') and isinstance(args.network_args, list):
             args.network_args.extend(additional_network_args)
         else:
             setattr(args, 'network_args', additional_network_args)
-        
+
         saved_args_file_path = os.path.join(output_dir, f"{output_name}_args.json")
         with open(saved_args_file_path, 'w') as f:
             json.dump(vars(args), f, indent=4)
@@ -623,7 +623,7 @@ class InitFluxLoRATraining:
         metadata = {}
         if extra_pnginfo is not None:
             metadata.update(extra_pnginfo["workflow"])
-       
+
         saved_workflow_file_path = os.path.join(output_dir, f"{output_name}_workflow.json")
         with open(saved_workflow_file_path, 'w') as f:
             json.dump(metadata, f, indent=4)
@@ -687,13 +687,13 @@ class InitFluxTraining:
     FUNCTION = "init_training"
     CATEGORY = "FluxTrainer"
 
-    def init_training(self, flux_models, optimizer_settings, dataset, sample_prompts, output_name, 
+    def init_training(self, flux_models, optimizer_settings, dataset, sample_prompts, output_name,
                       attention_mode, gradient_dtype, save_dtype, optimizer_fusing, additional_args=None, resume_args=None, **kwargs,):
         mm.soft_empty_cache()
 
         output_dir = os.path.abspath(kwargs.get("output_dir"))
         os.makedirs(output_dir, exist_ok=True)
-    
+
         total, used, free = shutil.disk_usage(output_dir)
         required_free_space = 25 * (2**30)
         if free <= required_free_space:
@@ -701,10 +701,10 @@ class InitFluxTraining:
 
         dataset_config = dataset["datasets"]
         dataset_toml = toml.dumps(json.loads(dataset_config))
-        
+
         parser = train_setup_parser()
         flux_train_utils.add_flux_train_arguments(parser)
-        
+
         if additional_args is not None:
             print(f"additional_args: {additional_args}")
             args, _ = parser.parse_known_args(args=shlex.split(additional_args))
@@ -793,7 +793,7 @@ class InitFluxTraining:
 
         epochs_count = network_trainer.num_train_epochs
 
-        
+
         saved_args_file_path = os.path.join(output_dir, f"{output_name}_args.json")
         with open(saved_args_file_path, 'w') as f:
             json.dump(vars(args), f, indent=4)
@@ -827,12 +827,12 @@ class InitFluxTrainingFromPreset:
 
         dataset = dataset_settings["dataset"]
         dataset_repeats = dataset_settings["repeats"]
-        
+
         parser = train_setup_parser()
         args, _ = parser.parse_known_args()
         for key, value in vars(preset_args).items():
             setattr(args, key, value)
-        
+
         output_dir = os.path.join(script_directory, "output")
         if '|' in sample_prompts:
             prompts = sample_prompts.split('|')
@@ -879,7 +879,7 @@ class InitFluxTrainingFromPreset:
             "training_loop": training_loop,
         }
         return (trainer, epochs_count, final_output_path, args)
-    
+
 class FluxTrainLoop:
     @classmethod
     def INPUT_TYPES(s):
@@ -912,11 +912,11 @@ class FluxTrainLoop:
                     epoch = network_trainer.current_epoch.value,
                 )
                 #pbar.update(steps_done)
-               
+
                 # Also break if the global steps have reached the max train steps
                 if network_trainer.global_step >= network_trainer.args.max_train_steps:
                     break
-            
+
             trainer = {
                 "network_trainer": network_trainer,
                 "training_loop": training_loop,
@@ -980,8 +980,8 @@ class FluxTrainAndValidateLoop:
         return (trainer, network_trainer.global_step)
 
     def validate(self, network_trainer, validation_settings=None):
-        params = ( 
-            network_trainer.current_epoch.value, 
+        params = (
+            network_trainer.current_epoch.value,
             network_trainer.global_step,
             validation_settings
         )
@@ -1017,7 +1017,7 @@ class FluxTrainSave:
         with torch.inference_mode(False):
             trainer = network_trainer["network_trainer"]
             global_step = trainer.global_step
-            
+
             ckpt_name = train_util.get_step_ckpt_name(trainer.args, "." + trainer.args.save_model_as, global_step)
             trainer.save_model(ckpt_name, trainer.accelerator.unwrap_model(trainer.network), global_step, trainer.current_epoch.value + 1)
 
@@ -1034,8 +1034,8 @@ class FluxTrainSave:
                 destination_dir = os.path.join(folder_paths.models_dir, "loras", "flux_trainer")
                 os.makedirs(destination_dir, exist_ok=True)
                 shutil.copy(lora_path, os.path.join(destination_dir, ckpt_name))
-        
-            
+
+
         return (network_trainer, lora_path, global_step)
 
 class FluxTrainSaveModel:
@@ -1060,10 +1060,10 @@ class FluxTrainSaveModel:
             global_step = trainer.global_step
 
             trainer.optimizer_eval_fn()
-            
+
             ckpt_name = train_util.get_step_ckpt_name(trainer.args, "." + trainer.args.save_model_as, global_step)
             flux_train_utils.save_flux_model_on_epoch_end_or_stepwise(
-                trainer.args, 
+                trainer.args,
                 False,
                 trainer.accelerator,
                 trainer.save_dtype,
@@ -1079,9 +1079,9 @@ class FluxTrainSaveModel:
                 model_path = os.path.join(folder_paths.models_dir, "diffusion_models", "flux_trainer", ckpt_name)
             if end_training:
                 trainer.accelerator.end_training()
-        
+
         return (network_trainer, model_path, global_step)
-    
+
 class FluxTrainEnd:
     @classmethod
     def INPUT_TYPES(s):
@@ -1101,7 +1101,7 @@ class FluxTrainEnd:
         with torch.inference_mode(False):
             training_loop = network_trainer["training_loop"]
             network_trainer = network_trainer["network_trainer"]
-            
+
             network_trainer.metadata["ss_epoch"] = str(network_trainer.num_train_epochs)
             network_trainer.metadata["ss_training_finished_at"] = str(time.time())
 
@@ -1126,7 +1126,7 @@ class FluxTrainEnd:
             training_loop = None
             network_trainer = None
             mm.soft_empty_cache()
-            
+
         return (final_lora_name, metadata, final_lora_path)
 
 class FluxTrainResume:
@@ -1148,9 +1148,9 @@ class FluxTrainResume:
             "resume": load_state_path,
             "skip_until_initial_step": skip_until_initial_step
         }
-            
+
         return (resume_args, )
-    
+
 class FluxTrainBlockSelect:
     @classmethod
     def INPUT_TYPES(s):
@@ -1166,19 +1166,19 @@ class FluxTrainBlockSelect:
 
     def block_select(self, include):
         import re
-    
+
         # Split the input string by commas to handle multiple ranges/blocks
         elements = include.split(',')
-    
+
         # Initialize a list to collect block names
         blocks = []
-    
+
         # Pattern to find ranges like (10-20)
         pattern = re.compile(r'\((\d+)-(\d+)\)')
-    
+
         # Extract the prefix and suffix from the first element
         prefix_suffix_pattern = re.compile(r'(.*)_blocks_(.*)')
-    
+
         for element in elements:
             element = element.strip()
             match = prefix_suffix_pattern.match(element)
@@ -1195,16 +1195,16 @@ class FluxTrainBlockSelect:
                     blocks.append(element)
             else:
                 blocks.append(element)
-    
+
         # Construct the `include` string
         include_string = ','.join(blocks)
-    
+
         block_args = {
             "include": f"only_if_contains={include_string}",
         }
-    
+
         return (block_args, )
-    
+
 class FluxTrainValidationSettings:
     @classmethod
     def INPUT_TYPES(s):
@@ -1230,7 +1230,7 @@ class FluxTrainValidationSettings:
         print(validation_settings)
 
         return (validation_settings,)
-        
+
 class FluxTrainValidate:
     @classmethod
     def INPUT_TYPES(s):
@@ -1252,8 +1252,8 @@ class FluxTrainValidate:
         training_loop = network_trainer["training_loop"]
         network_trainer = network_trainer["network_trainer"]
 
-        params = ( 
-            network_trainer.current_epoch.value, 
+        params = (
+            network_trainer.current_epoch.value,
             network_trainer.global_step,
             validation_settings
         )
@@ -1266,7 +1266,7 @@ class FluxTrainValidate:
             "training_loop": training_loop,
         }
         return (trainer, (0.5 * (image_tensors + 1.0)).cpu().float(),)
-    
+
 class VisualizeLoss:
     @classmethod
     def INPUT_TYPES(s):
@@ -1342,7 +1342,7 @@ class FluxKohyaInferenceSampler:
             "use_fp8": ("BOOLEAN", {"default": True, "tooltip": "use fp8 weights"}),
             "apply_t5_attn_mask": ("BOOLEAN", {"default": True, "tooltip": "use t5 attention mask"}),
             "prompt": ("STRING", {"multiline": True, "default": "illustration of a kitten", "tooltip": "prompt"}),
-          
+
             },
         }
 
@@ -1364,7 +1364,7 @@ class FluxKohyaInferenceSampler:
         import gc
 
         device = "cuda"
-        
+
 
         if use_fp8:
             accelerator = accelerate.Accelerator(mixed_precision="bf16")
@@ -1464,14 +1464,14 @@ class FluxKohyaInferenceSampler:
         # NaN check
         if torch.isnan(l_pooled).any():
             raise ValueError("NaN in l_pooled")
-                
+
         if torch.isnan(t5_out).any():
             raise ValueError("NaN in t5_out")
 
-        
+
         clip_l = clip_l.cpu()
         t5xxl = t5xxl.cpu()
-      
+
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -1574,9 +1574,9 @@ class FluxKohyaInferenceSampler:
                     )
 
             return x
-        
+
         x = do_sample(accelerator, model, noise, img_ids, l_pooled, t5_out, txt_ids, steps, guidance_scale, t5_attn_mask, False, device, dtype)
-        
+
         model = model.cpu()
         gc.collect()
         torch.cuda.empty_cache()
@@ -1601,7 +1601,7 @@ class FluxKohyaInferenceSampler:
         x = x.clamp(-1, 1)
         x = x.permute(0, 2, 3, 1)
 
-        return ((0.5 * (x + 1.0)).cpu().float(),)   
+        return ((0.5 * (x + 1.0)).cpu().float(),)
 
 class UploadToHuggingFace:
     @classmethod
@@ -1627,7 +1627,7 @@ class UploadToHuggingFace:
     def upload(self, source_path, network_trainer, repo_id, private, revision, token=""):
         with torch.inference_mode(False):
             from huggingface_hub import HfApi
-            
+
             if not token:
                 with open(os.path.join(script_directory, "hf_token.json"), "r") as file:
                     token_data = json.load(file)
@@ -1648,15 +1648,15 @@ class UploadToHuggingFace:
 
             try:
                 api.repo_info(
-                    repo_id=repo_id, 
-                    revision=revision if revision != "" else None, 
+                    repo_id=repo_id,
+                    revision=revision if revision != "" else None,
                     repo_type=repo_type)
                 repo_exists = True
                 logger.info(f"Repository {repo_id} exists.")
             except Exception as e:  # Catching a more specific exception would be better if you know what to expect
                 repo_exists = False
                 logger.error(f"Repository {repo_id} does not exist. Exception: {e}")
-            
+
             if not repo_exists:
                 try:
                     api.create_repo(repo_id=repo_id, repo_type=repo_type, private=private)
@@ -1697,9 +1697,9 @@ class UploadToHuggingFace:
                 logger.error(f"failed to upload to HuggingFace / HuggingFaceへのアップロードに失敗しました : {e}")
                 logger.error("===========================================")
                 status = f"Failed to upload to HuggingFace {e}"
-                
+
             return (network_trainer, status,)
-        
+
 class ExtractFluxLoRA:
     @classmethod
     def INPUT_TYPES(s):
@@ -1748,7 +1748,55 @@ class ExtractFluxLoRA:
             no_metadata = not metadata,
             mem_eff_safe_open = mem_eff_safe_open
         )
-     
+
+        return (outpath,)
+
+class ExtractQuantFluxLoRA:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "original_model": (folder_paths.get_filename_list("unet"), ),
+                "output_path": ("STRING", {"default": f"{str(os.path.join(folder_paths.models_dir, 'loras', 'Flux'))}"}),
+                "dim": ("INT", {"default": 4, "min": 2, "max": 1024, "step": 2, "tooltip": "LoRA rank"}),
+                "save_dtype": (["fp32", "fp16", "bf16"], {"default": "bf16", "tooltip": "the dtype to save the LoRA as"}),
+                "load_device": (["cpu", "cuda"], {"default": "cuda", "tooltip": "the device to load the model to"}),
+                "store_device": (["cpu", "cuda"], {"default": "cpu", "tooltip": "the device to store the LoRA as"}),
+                "outlier_quantile": ("FLOAT", {"default": 0.995, "min": 0.0, "max": 1.0, "step": 0.001, "tooltip": "outlier quantile"}),
+                "metadata": ("BOOLEAN", {"default": True, "tooltip": "build metadata"}),
+                "mem_eff_safe_open": ("BOOLEAN", {"default": False, "tooltip": "memory efficient loading"}),
+             },
+        }
+
+    RETURN_TYPES = ("STRING", )
+    RETURN_NAMES = ("output_path",)
+    FUNCTION = "extract"
+    CATEGORY = "FluxTrainer"
+
+    def extract(self, original_model, output_path, dim, save_dtype, load_device, store_device, outlier_quantile, metadata, mem_eff_safe_open):
+        from .flux_extract_lora import quant_svd
+        transformer_path = folder_paths.get_full_path("unet", original_model)
+        print(output_path)
+        if not os.path.exists(output_path):
+            raise RuntimeError(f"The path '{output_path}' does not exist.")
+        if not os.path.isdir(output_path):
+            raise RuntimeError(f"'{output_path}' is not a directory.")
+        if not os.access(output_path, os.R_OK):
+            raise RuntimeError(f"You do not have read permissions for '{output_path}'.")
+        save_to = os.path.join(output_path, f"{original_model.replace('.safetensors', '')}_quant_lora_rank_{dim}-{save_dtype}.safetensors")
+        print(save_to)
+        outpath = quant_svd(
+            model_org = transformer_path,
+            save_to = save_to,
+            dim = dim,
+            device = load_device,
+            store_device = store_device,
+            save_precision = save_dtype,
+            outlier_quantile = outlier_quantile,
+            no_metadata = not metadata,
+            mem_eff_safe_open = mem_eff_safe_open
+        )
+
         return (outpath,)
 
 NODE_CLASS_MAPPINGS = {
@@ -1769,6 +1817,7 @@ NODE_CLASS_MAPPINGS = {
     "OptimizerConfigAdafactor": OptimizerConfigAdafactor,
     "FluxTrainSaveModel": FluxTrainSaveModel,
     "ExtractFluxLoRA": ExtractFluxLoRA,
+    "ExtractQuantFluxLoRA": ExtractQuantFluxLoRA,
     "OptimizerConfigProdigy": OptimizerConfigProdigy,
     "FluxTrainResume": FluxTrainResume,
     "FluxTrainBlockSelect": FluxTrainBlockSelect,
@@ -1796,6 +1845,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "OptimizerConfigAdafactor": "Optimizer Config Adafactor",
     "FluxTrainSaveModel": "Flux Train Save Model",
     "ExtractFluxLoRA": "Extract Flux LoRA",
+    "ExtractQuantFluxLoRA": "Extract Quant Flux LoRA",
     "OptimizerConfigProdigy": "Optimizer Config Prodigy",
     "FluxTrainResume": "Flux Train Resume",
     "FluxTrainBlockSelect": "Flux Train Block Select",
