@@ -1734,7 +1734,7 @@ class ExtractFluxLoRA:
             raise RuntimeError(f"'{output_path}' is not a directory.")
         if not os.access(output_path, os.R_OK):
             raise RuntimeError(f"You do not have read permissions for '{output_path}'.")
-        save_to = os.path.join(output_path, f"{finetuned_model.replace('.safetensors', '')}_extracted_lora_rank_{dim}-{save_dtype}.safetensors")
+        save_to = os.path.join(output_path, f"{finetuned_model.replace('.safetensors', '')}_r{dim}-{save_dtype}.safetensors")
         print(save_to)
         outpath = svd(
             model_org = transformer_path,
@@ -1783,7 +1783,7 @@ class ExtractQuantFluxLoRA:
             raise RuntimeError(f"'{output_path}' is not a directory.")
         if not os.access(output_path, os.R_OK):
             raise RuntimeError(f"You do not have read permissions for '{output_path}'.")
-        save_to = os.path.join(output_path, f"{original_model.replace('.safetensors', '')}_quant_lora_rank_{dim}-{save_dtype}.safetensors")
+        save_to = os.path.join(output_path, f"{original_model.replace('.safetensors', '')}_quant_r{dim}-{save_dtype}.safetensors")
         print(save_to)
         outpath = quant_svd(
             model_org = transformer_path,
