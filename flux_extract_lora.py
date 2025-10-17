@@ -25,80 +25,117 @@ logger = logging.getLogger(__name__)
 
 from comfy.utils import ProgressBar
 
+
+#  or "final_layer" in key or "txt_in" in key or "img_in" in key or "distilled_guidance_layer" in key or "cross_attn" in key or "ffn" in key or "self_attn" in key or "norm3" in key or "head.head" in key or "text_embedding" in key or "time_embedding" in key or "time_projection" in key
 # ===============================================================================
-# START: NEW CODE FOR QUANTIZATION (added without modifying existing code)
+# START: REFACTORED AND IMPROVED CODE FOR QUANTIZATION
 # ===============================================================================
 
-# --- Configuration for FP8 Quantization ---
-TARGET_FP8_DTYPE = torch.float8_e4m3fn
+# --- Configuration ---
 COMPUTE_DTYPE = torch.float32  # Use float32 for stable delta calculations
 SCALE_DTYPE = torch.float32
 
-# --- Helper functions for FP8 quantization with stochastic rounding ---
+# --- Helper functions for FP8 quantization ---
 
 def get_fp8_constants(fp8_dtype: torch.dtype) -> Tuple[float, float, float]:
     """Gets the min, max, and smallest positive normal value for a given FP8 dtype."""
+    if fp8_dtype not in [torch.float8_e4m3fn, torch.float8_e5m2]:
+        raise ValueError(f"Unsupported FP8 dtype: {fp8_dtype}")
+
     finfo = torch.finfo(fp8_dtype)
-    if fp8_dtype == torch.float8_e4m3fn:
-        fp8_min_pos = 2**-9  # Smallest subnormal for E4M3FN
-    elif fp8_dtype == torch.float8_e5m2:
-        fp8_min_pos = 2**-16  # Smallest subnormal for E5M2
-    else:
-        fp8_min_pos = finfo.tiny
+    # E4M3FN has a different tiny value in practice due to subnormals
+    fp8_min_pos = 2**-9 if fp8_dtype == torch.float8_e4m3fn else finfo.tiny
     return float(finfo.min), float(finfo.max), float(fp8_min_pos)
 
-# Global FP8 constants for our new function
-FP8_MIN, FP8_MAX, FP8_MIN_POS = get_fp8_constants(TARGET_FP8_DTYPE)
-
-def calc_mantissa(abs_x, exponent, normal_mask, MANTISSA_BITS, EXPONENT_BIAS, generator=None):
-    mantissa_scaled = torch.where(
-        normal_mask,
-        (abs_x / (2.0 ** (exponent - EXPONENT_BIAS)) - 1.0) * (2**MANTISSA_BITS),
-        (abs_x / (2.0 ** (-EXPONENT_BIAS + 1 - MANTISSA_BITS)))
-    )
-    mantissa_scaled += torch.rand(mantissa_scaled.size(), dtype=mantissa_scaled.dtype, layout=mantissa_scaled.layout, device=mantissa_scaled.device, generator=generator)
-    return mantissa_scaled.floor() / (2**MANTISSA_BITS)
-
-def manual_stochastic_round_to_float8(x, dtype, generator=None):
+def manual_stochastic_round_to_float8(x: torch.Tensor, dtype: torch.dtype, generator: torch.Generator) -> torch.Tensor:
+    """Performs stochastic rounding for a given FP8 dtype."""
     if dtype == torch.float8_e4m3fn:
         EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 4, 3, 7
     elif dtype == torch.float8_e5m2:
         EXPONENT_BITS, MANTISSA_BITS, EXPONENT_BIAS = 5, 2, 15
     else:
-        raise ValueError("Unsupported dtype")
+        raise ValueError("Unsupported dtype for manual stochastic rounding")
 
-    x = x.half()
-    sign = torch.sign(x)
-    abs_x = x.abs()
-    sign = torch.where(abs_x == 0, 0, sign)
+    # Use bfloat16 for intermediate calculations to prevent overflow/underflow issues with fp16
+    x_bf16 = x.to(torch.bfloat16)
+    sign = torch.sign(x_bf16)
+    abs_x = x_bf16.abs()
+    sign = torch.where(abs_x == 0, torch.tensor(0.0, device=x.device, dtype=x.dtype), sign)
 
     exponent = torch.clamp(torch.floor(torch.log2(abs_x)) + EXPONENT_BIAS, 0, 2**EXPONENT_BITS - 1)
     normal_mask = ~(exponent == 0)
-    abs_x[:] = calc_mantissa(abs_x, exponent, normal_mask, MANTISSA_BITS, EXPONENT_BIAS, generator=generator)
 
-    sign *= torch.where(
+    # Calculate scaled mantissa
+    mantissa_scaled = torch.where(
         normal_mask,
-        (2.0 ** (exponent - EXPONENT_BIAS)) * (1.0 + abs_x),
-        (2.0 ** (-EXPONENT_BIAS + 1)) * abs_x
+        (abs_x / (2.0 ** (exponent - EXPONENT_BIAS)) - 1.0) * (2**MANTISSA_BITS),
+        (abs_x / (2.0 ** (-EXPONENT_BIAS + 1 - MANTISSA_BITS)))
     )
-    inf = torch.finfo(dtype)
-    torch.clamp(sign, min=inf.min, max=inf.max, out=sign)
-    return sign
 
-def stochastic_rounding(value, dtype=TARGET_FP8_DTYPE, seed=0):
-    if dtype in [torch.float32, torch.float16, torch.bfloat16]:
-        return value.to(dtype=dtype)
-    if dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
-        generator = torch.Generator(device=value.device)
-        generator.manual_seed(seed)
-        output = torch.empty_like(value, dtype=dtype)
-        # Slicing for large tensors to avoid potential issues
-        num_slices = max(1, (value.numel() // (1536 * 1536)))
-        slice_size = max(1, round(value.shape[0] / num_slices))
-        for i in range(0, value.shape[0], slice_size):
-            output[i:i + slice_size].copy_(manual_stochastic_round_to_float8(value[i:i + slice_size], dtype, generator=generator))
-        return output
-    return value.to(dtype=dtype)
+    # Stochastic rounding step
+    mantissa_scaled += torch.rand(mantissa_scaled.size(), dtype=mantissa_scaled.dtype, layout=mantissa_scaled.layout, device=mantissa_scaled.device, generator=generator)
+    rounded_mantissa = mantissa_scaled.floor() / (2**MANTISSA_BITS)
+
+    # Reconstruct the number
+    reconstructed_abs = torch.where(
+        normal_mask,
+        (2.0 ** (exponent - EXPONENT_BIAS)) * (1.0 + rounded_mantissa),
+        (2.0 ** (-EXPONENT_BIAS + 1)) * rounded_mantissa
+    )
+
+    reconstructed_val = sign * reconstructed_abs
+    finfo = torch.finfo(dtype)
+    return torch.clamp(reconstructed_val, min=finfo.min, max=finfo.max).to(dtype)
+
+
+def quantize_dequantize_tensor(
+    tensor: torch.Tensor,
+    fp8_dtype: torch.dtype,
+    scaling_mode: str,
+    seed: int
+) -> torch.Tensor:
+    """
+    Quantizes a tensor to a specified FP8 format and then de-quantizes it back.
+
+    Args:
+        tensor (torch.Tensor): The input tensor to process.
+        fp8_dtype (torch.dtype): The target FP8 dtype (e.g., torch.float8_e4m3fn).
+        scaling_mode (str): 'tensor' for per-tensor or 'vector' for per-row scaling.
+        seed (int): Random seed for stochastic rounding.
+
+    Returns:
+        torch.Tensor: The de-quantized tensor in the original compute dtype.
+    """
+    FP8_MIN, FP8_MAX, FP8_MIN_POS = get_fp8_constants(fp8_dtype)
+    original_device = tensor.device
+    compute_tensor = tensor.to(COMPUTE_DTYPE)
+
+    # 1. Calculate scale factor
+    if scaling_mode == 'vector':
+        # Per-row (vector) scaling
+        abs_max = compute_tensor.abs().max(dim=1, keepdim=True)[0]
+    else: # 'tensor'
+        # Per-tensor scaling
+        abs_max = compute_tensor.abs().max()
+
+    # Avoid division by zero for empty/zero tensors
+    abs_max.clamp_min_(FP8_MIN_POS)
+    scale_factor = FP8_MAX / abs_max
+
+    # 2. Scale, clamp, and quantize with stochastic rounding
+    scaled_tensor = compute_tensor.mul(scale_factor)
+    clamped_tensor = torch.clamp(scaled_tensor, FP8_MIN, FP8_MAX)
+
+    # Stochastic rounding
+    generator = torch.Generator(device=original_device).manual_seed(seed)
+    # The manual function expects a high-precision tensor and returns an FP8 one
+    quantized_fp8_tensor = manual_stochastic_round_to_float8(clamped_tensor, fp8_dtype, generator)
+
+    # 3. De-quantize back to high precision
+    dequant_scale = scale_factor.reciprocal()
+    dequantized_tensor = quantized_fp8_tensor.to(COMPUTE_DTYPE) * dequant_scale
+
+    return dequantized_tensor.to(original_device)
 
 
 def quant_svd(
@@ -109,26 +146,29 @@ def quant_svd(
     store_device='cpu',
     save_precision=None,
     outlier_quantile=0.99,
+    scaling_mode='tensor',
+    fp8_dtype_str='e4m3fn',
+    seed=0,
     no_metadata=False,
     mem_eff_safe_open=False,
 ):
     """
     Creates a LoRA by extracting the outlier quantization errors of a model.
-    This function quantizes a model to FP8 and then calculates the difference
-    between the original and the de-quantized version. It then isolates the
-    largest errors (outliers) and performs SVD on them to create a
-    'quantization error correction' LoRA.
+    This function quantizes a model to FP8, calculates the difference (error)
+    between the original and the de-quantized version, isolates the largest
+    errors (outliers), and performs SVD on them to create a LoRA that
+    compensates for the quantization precision loss.
     """
     def str_to_dtype(p):
-        if p == "float":
-            return torch.float
-        if p == "fp16":
-            return torch.float16
-        if p == "bf16":
-            return torch.bfloat16
+        if p == "float": return torch.float
+        if p == "fp16": return torch.float16
+        if p == "bf16": return torch.bfloat16
         return None
 
     save_dtype = str_to_dtype(save_precision)
+    fp8_dtype = torch.float8_e4m3fn if fp8_dtype_str == 'e4m3fn' else torch.float8_e5m2
+    logger.info(f"Starting quant_svd with rank={dim}, scaling_mode='{scaling_mode}', fp8_dtype='{fp8_dtype_str}', outlier_quantile={outlier_quantile}")
+
 
     if not mem_eff_safe_open:
         open_fn = lambda fn: safe_open(fn, framework="pt")
@@ -140,7 +180,7 @@ def quant_svd(
     with open_fn(model_org) as fo:
         keys = []
         for key in fo.keys():
-            if not ("single_block" in key or "double_block" in key or "final_layer" in key or "txt_in" in key or "img_in" in key):
+            if not ("single_block" in key or "double_block" in key or "blocks" in key):
                 continue
             if ".bias" in key or "norm" in key:
                 continue
@@ -151,84 +191,73 @@ def quant_svd(
         comfy_pbar = ProgressBar(len(keys))
         for key in tqdm(keys, desc="Processing Quantization Deltas"):
             # 1. Get original tensor
-            original_tensor = fo.get_tensor(key).to(COMPUTE_DTYPE)
-            if original_tensor.numel() == 0:
+            original_tensor = fo.get_tensor(key).to(device=device, dtype=COMPUTE_DTYPE)
+            if original_tensor.numel() == 0 or original_tensor.ndim != 2:
                 continue
 
-            # 2. Quantize the tensor to FP8
-            abs_max = torch.max(torch.abs(original_tensor))
-            if abs_max < 1e-12:
-                scale_factor = torch.tensor(1.0, dtype=COMPUTE_DTYPE)
-            else:
-                scale_factor = (FP8_MAX - FP8_MIN_POS) / abs_max.clamp(min=FP8_MIN_POS)
+            # 2. Quantize and de-quantize the tensor using the new modular function
+            dequantized_tensor = quantize_dequantize_tensor(
+                original_tensor,
+                fp8_dtype=fp8_dtype,
+                scaling_mode=scaling_mode,
+                seed=seed
+            )
 
-            scaled_tensor = original_tensor.mul(scale_factor)
-            clamped_tensor = torch.clamp(scaled_tensor, FP8_MIN, FP8_MAX)
-            quantized_fp8_tensor = stochastic_rounding(clamped_tensor, dtype=TARGET_FP8_DTYPE)
-
-            # 3. De-quantize back to high precision
-            dequant_scale = scale_factor.reciprocal()
-            dequantized_tensor = quantized_fp8_tensor.to(COMPUTE_DTYPE) * dequant_scale
-
-            # 4. Calculate the quantization error delta
+            # 3. Calculate the quantization error delta
             delta = original_tensor - dequantized_tensor
 
-            # 5. Isolate outliers (the opposite of clamping)
-            if outlier_quantile < 1.0:
+            # 4. Isolate outliers (the opposite of clamping)
+            if 0.0 < outlier_quantile < 1.0:
                 abs_delta = delta.abs()
-
-                # --- START OF THE FIX ---
-                # Use torch.kthvalue for memory efficiency on huge tensors
                 flat_delta = abs_delta.flatten()
                 num_elements = flat_delta.numel()
 
-                # Calculate the index 'k' corresponding to the quantile
-                # Ensure k is a valid index (between 1 and num_elements)
+                # Use torch.kthvalue for memory efficiency, which is much better than quantile.
+                # Calculate the index 'k' corresponding to the quantile.
+                # Ensure k is a valid index (between 1 and num_elements).
                 k = min(max(1, int(outlier_quantile * num_elements)), num_elements)
 
-                # Find the k-th smallest value, which is our quantile threshold
+                # Find the k-th smallest value, which is our quantile threshold.
                 threshold = torch.kthvalue(flat_delta, k).values
-                # --- END OF THE FIX ---
 
                 mask = abs_delta >= threshold
                 outlier_delta = delta * mask
             else:
-                outlier_delta = delta # No outlier isolation if quantile is 1.0
+                outlier_delta = delta # No outlier isolation if quantile is 1.0 or 0.0
 
-            # 6. Perform SVD on the outlier delta matrix
-            if device:
-                outlier_delta = outlier_delta.to(device)
-
-            out_dim, in_dim = outlier_delta.size()[0:2]
+            # 5. Perform SVD on the outlier delta matrix
+            out_dim, in_dim = outlier_delta.shape
             rank = min(dim, in_dim, out_dim)
 
+            # SVD works on 2D matrices
             mat = outlier_delta.squeeze()
-            U, S, Vh = torch.linalg.svd(mat)
+            U, S, Vh = torch.linalg.svd(mat, full_matrices=False)
 
             U = U[:, :rank]
             S = S[:rank]
-            U = U @ torch.diag(S)
             Vh = Vh[:rank, :]
 
-            # No clamping here, as we isolated outliers *before* SVD
+            # Reconstruct U with the singular values
+            U = U @ torch.diag(S)
+
             U = U.to(store_device, dtype=save_dtype).contiguous()
             Vh = Vh.to(store_device, dtype=save_dtype).contiguous()
 
-            logger.info(f"key: {key}, U: {U.size()}, Vh: {Vh.size()}")
+            logger.info(f"Processed key: {key}, U: {U.size()}, Vh: {Vh.size()}")
             comfy_pbar.update(1)
             lora_weights[key] = (U, Vh)
-            del mat, U, S, Vh, delta, outlier_delta, original_tensor
+            del mat, U, S, Vh, delta, outlier_delta, original_tensor, dequantized_tensor
 
-    # 7. Make state dict for LoRA (same logic as original svd function)
+    # 6. Make state dict for LoRA (same logic as original svd function)
     lora_sd = {}
     for key, (up_weight, down_weight) in lora_weights.items():
         lora_name = key.replace(".weight", "").replace(".", "_")
         lora_name = lora_flux.LoRANetwork.LORA_PREFIX_FLUX + "_" + lora_name
         lora_sd[lora_name + ".lora_up.weight"] = up_weight
         lora_sd[lora_name + ".lora_down.weight"] = down_weight
-        lora_sd[lora_name + ".alpha"] = torch.tensor(down_weight.size()[0])
+        lora_sd[lora_name + ".alpha"] = torch.tensor(float(dim)) # Use float(dim) for alpha
 
-    net_kwargs = {}
+    net_kwargs = {"scaling_mode": scaling_mode, "fp8_dtype": fp8_dtype_str, "seed": seed}
     metadata = {
         "ss_v2": str(False),
         "ss_base_model_version": flux_utils.MODEL_VERSION_FLUX_V1,
@@ -236,7 +265,7 @@ def quant_svd(
         "ss_network_dim": str(dim),
         "ss_network_alpha": str(float(dim)),
         "ss_network_args": json.dumps(net_kwargs),
-        "ss_comment": f"LoRA extracted from quantization errors with outlier_quantile={outlier_quantile}"
+        "ss_comment": f"LoRA from quantization errors. Quantile={outlier_quantile}, Rank={dim}, Scaling={scaling_mode}"
     }
 
     if not no_metadata:
@@ -249,9 +278,8 @@ def quant_svd(
     return save_to
 
 
-
 # ===============================================================================
-# END: NEW CODE
+# END: REFACTORED CODE
 # ===============================================================================
 
 
@@ -302,7 +330,7 @@ def svd(
         # filter keys or "img_in" in key
         keys = []
         for key in fo.keys():
-            if not ("single_block" in key or "double_block" in key or "final_layer" in key or "txt_in" in key or "img_in" in key):
+            if not ("single_block" in key or "double_block" in key or "blocks" in key):
                 continue
             if ".bias" in key:
                 continue
@@ -428,18 +456,39 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device", type=str, default=None, help="device to use, cuda for GPU"
     )
+    # SVD mode specific arg
     parser.add_argument(
         "--clamp_quantile",
         type=float,
         default=0.99,
         help="For 'svd' mode: Quantile clamping value, float, (0-1). Default = 0.99",
     )
-    # NEW ARGUMENT FOR QUANT_SVD MODE
+    # QUANT_SVD mode specific args
     parser.add_argument(
         "--outlier_quantile",
         type=float,
         default=0.99,
-        help="For 'quant_svd' mode: keep only the error values above this quantile (0-1). E.g., 0.99 keeps the top 1%% of errors.",
+        help="For 'quant_svd': keep only error values above this quantile (0-1). E.g., 0.99 keeps top 1%% of errors.",
+    )
+    parser.add_argument(
+        "--scaling_mode",
+        type=str,
+        default="tensor",
+        choices=["vector", "tensor"],
+        help="For 'quant_svd': Quantization scaling mode. 'vector' for row-wise, 'tensor' for per-tensor.",
+    )
+    parser.add_argument(
+        "--fp8_dtype",
+        type=str,
+        default="e4m3fn",
+        choices=["e4m3fn", "e5m2"],
+        help="For 'quant_svd': The FP8 data type to use for the quantization simulation.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="For 'quant_svd': Seed for stochastic rounding for reproducible results.",
     )
     parser.add_argument(
         "--no_metadata",
@@ -477,6 +526,9 @@ if __name__ == "__main__":
             device=args.device,
             save_precision=args.save_precision,
             outlier_quantile=args.outlier_quantile,
+            scaling_mode=args.scaling_mode,
+            fp8_dtype_str=args.fp8_dtype,
+            seed=args.seed,
             no_metadata=args.no_metadata,
             mem_eff_safe_open=args.mem_eff_safe_open,
         )

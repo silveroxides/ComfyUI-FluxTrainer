@@ -5,6 +5,7 @@ from torchvision import transforms
 import folder_paths
 import comfy.model_management as mm
 import comfy.utils
+from comfy.comfy_types.node_typing import IO, ComfyNodeABC, InputTypeDict
 import toml
 import json
 import time
@@ -33,9 +34,9 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class FluxTrainModelSelect:
+class FluxTrainModelSelect(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
                     "transformer": (folder_paths.get_filename_list("unet"), ),
                     "vae": (folder_paths.get_filename_list("vae"), ),
@@ -43,7 +44,7 @@ class FluxTrainModelSelect:
                     "t5": (folder_paths.get_filename_list("clip"), ),
                 },
                 "optional": {
-                    "lora_path": ("STRING",{"multiline": True, "forceInput": True, "default": "", "tooltip": "pre-trained LoRA path to load (network_weights)"}),
+                    "lora_path": (IO.STRING,{"multiline": True, "forceInput": True, "default": "", "tooltip": "pre-trained LoRA path to load (network_weights)"}),
                 }
         }
 
@@ -69,7 +70,7 @@ class FluxTrainModelSelect:
 
         return (flux_models,)
 
-class TrainDatasetGeneralConfig:
+class TrainDatasetGeneralConfig(ComfyNodeABC):
     queue_counter = 0
     @classmethod
     def IS_CHANGED(s, reset_on_queue=False, **kwargs):
@@ -78,17 +79,17 @@ class TrainDatasetGeneralConfig:
         print(f"queue_counter: {s.queue_counter}")
         return s.queue_counter
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "color_aug": ("BOOLEAN",{"default": False, "tooltip": "enable weak color augmentation"}),
-            "flip_aug": ("BOOLEAN",{"default": False, "tooltip": "enable horizontal flip augmentation"}),
-            "shuffle_caption": ("BOOLEAN",{"default": False, "tooltip": "shuffle caption"}),
-            "caption_dropout_rate": ("FLOAT",{"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01,"tooltip": "tag dropout rate"}),
-            "alpha_mask": ("BOOLEAN",{"default": False, "tooltip": "use alpha channel as mask for training"}),
+            "color_aug": (IO.BOOLEAN,{"default": False, "tooltip": "enable weak color augmentation"}),
+            "flip_aug": (IO.BOOLEAN,{"default": False, "tooltip": "enable horizontal flip augmentation"}),
+            "shuffle_caption": (IO.BOOLEAN,{"default": False, "tooltip": "shuffle caption"}),
+            "caption_dropout_rate": (IO.FLOAT,{"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01,"tooltip": "tag dropout rate"}),
+            "alpha_mask": (IO.BOOLEAN,{"default": False, "tooltip": "use alpha channel as mask for training"}),
             },
             "optional": {
-                "reset_on_queue": ("BOOLEAN",{"default": False, "tooltip": "Force refresh of everything for cleaner queueing"}),
-                "caption_extension": ("STRING",{"default": ".txt", "tooltip": "extension for caption files"}),
+                "reset_on_queue": (IO.BOOLEAN,{"default": False, "tooltip": "Force refresh of everything for cleaner queueing"}),
+                "caption_extension": (IO.STRING,{"default": ".txt", "tooltip": "extension for caption files"}),
             }
         }
 
@@ -118,14 +119,14 @@ class TrainDatasetGeneralConfig:
         }
         return (dataset_config,)
 
-class TrainDatasetRegularization:
+class TrainDatasetRegularization(ComfyNodeABC):
 
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "dataset_path": ("STRING",{"multiline": True, "default": "", "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
-            "class_tokens": ("STRING",{"multiline": True, "default": "", "tooltip": "aka trigger word, if specified, will be added to the start of each caption, if no captions exist, will be used on it's own"}),
-            "num_repeats": ("INT", {"default": 1, "min": 1, "tooltip": "number of times to repeat dataset for an epoch"}),
+            "dataset_path": (IO.STRING,{"multiline": True, "default": "", "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
+            "class_tokens": (IO.STRING,{"multiline": True, "default": "", "tooltip": "aka trigger word, if specified, will be added to the start of each caption, if no captions exist, will be used on it's own"}),
+            "num_repeats": (IO.INT, {"default": 1, "min": 1, "tooltip": "number of times to repeat dataset for an epoch"}),
             },
         }
 
@@ -145,24 +146,24 @@ class TrainDatasetRegularization:
 
         return reg_subset,
 
-class TrainDatasetAdd:
+class TrainDatasetAdd(ComfyNodeABC):
     def __init__(self):
         self.previous_dataset_signature = None
 
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "dataset_config": ("JSON",),
-            "width": ("INT",{"min": 64, "default": 1024, "tooltip": "base resolution width"}),
-            "height": ("INT",{"min": 64, "default": 1024, "tooltip": "base resolution height"}),
-            "batch_size": ("INT",{"min": 1, "default": 2, "tooltip": "Higher batch size uses more memory and generalizes the training more"}),
-            "dataset_path": ("STRING",{"multiline": True, "default": "", "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
-            "class_tokens": ("STRING",{"multiline": True, "default": "", "tooltip": "aka trigger word, if specified, will be added to the start of each caption, if no captions exist, will be used on it's own"}),
-            "enable_bucket": ("BOOLEAN",{"default": True, "tooltip": "enable buckets for multi aspect ratio training"}),
-            "bucket_no_upscale": ("BOOLEAN",{"default": False, "tooltip": "don't allow upscaling when bucketing"}),
-            "num_repeats": ("INT", {"default": 1, "min": 1, "tooltip": "number of times to repeat dataset for an epoch"}),
-            "min_bucket_reso": ("INT", {"default": 256, "min": 64, "max": 4096, "step": 8, "tooltip": "min bucket resolution"}),
-            "max_bucket_reso": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 8, "tooltip": "max bucket resolution"}),
+            "width": (IO.INT,{"min": 64, "default": 1024, "tooltip": "base resolution width"}),
+            "height": (IO.INT,{"min": 64, "default": 1024, "tooltip": "base resolution height"}),
+            "batch_size": (IO.INT,{"min": 1, "default": 2, "tooltip": "Higher batch size uses more memory and generalizes the training more"}),
+            "dataset_path": (IO.STRING,{"multiline": True, "default": "", "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
+            "class_tokens": (IO.STRING,{"multiline": True, "default": "", "tooltip": "aka trigger word, if specified, will be added to the start of each caption, if no captions exist, will be used on it's own"}),
+            "enable_bucket": (IO.BOOLEAN,{"default": True, "tooltip": "enable buckets for multi aspect ratio training"}),
+            "bucket_no_upscale": (IO.BOOLEAN,{"default": False, "tooltip": "don't allow upscaling when bucketing"}),
+            "num_repeats": (IO.INT, {"default": 1, "min": 1, "tooltip": "number of times to repeat dataset for an epoch"}),
+            "min_bucket_reso": (IO.INT, {"default": 256, "min": 64, "max": 4096, "step": 8, "tooltip": "min bucket resolution"}),
+            "max_bucket_reso": (IO.INT, {"default": 1024, "min": 64, "max": 4096, "step": 8, "tooltip": "max bucket resolution"}),
             },
             "optional": {
                  "regularization": ("JSON", {"tooltip": "reg data dir"}),
@@ -224,18 +225,18 @@ class TrainDatasetAdd:
         # Create a unique signature for the dataset based on its attributes
         return json.dumps(dataset, sort_keys=True)
 
-class OptimizerConfig:
+class OptimizerConfig(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "optimizer_type": (["adamw8bit", "adamw","prodigy", "CAME", "Lion8bit", "Lion", "adamwschedulefree", "sgdschedulefree", "AdEMAMix8bit", "PagedAdEMAMix8bit", "ProdigyPlusScheduleFree"], {"default": "adamw8bit", "tooltip": "optimizer type"}),
-            "max_grad_norm": ("FLOAT",{"default": 1.0, "min": 0.0, "tooltip": "gradient clipping"}),
+            "max_grad_norm": (IO.FLOAT,{"default": 1.0, "min": 0.0, "tooltip": "gradient clipping"}),
             "lr_scheduler": (["constant", "cosine", "cosine_with_restarts", "polynomial", "constant_with_warmup"], {"default": "constant", "tooltip": "learning rate scheduler"}),
-            "lr_warmup_steps": ("INT",{"default": 0, "min": 0, "tooltip": "learning rate warmup steps"}),
-            "lr_scheduler_num_cycles": ("INT",{"default": 1, "min": 1, "tooltip": "learning rate scheduler num cycles"}),
-            "lr_scheduler_power": ("FLOAT",{"default": 1.0, "min": 0.0, "tooltip": "learning rate scheduler power"}),
-            "min_snr_gamma": ("FLOAT",{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
-            "extra_optimizer_args": ("STRING",{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
+            "lr_warmup_steps": (IO.INT,{"default": 0, "min": 0, "tooltip": "learning rate warmup steps"}),
+            "lr_scheduler_num_cycles": (IO.INT,{"default": 1, "min": 1, "tooltip": "learning rate scheduler num cycles"}),
+            "lr_scheduler_power": (IO.FLOAT,{"default": 1.0, "min": 0.0, "tooltip": "learning rate scheduler power"}),
+            "min_snr_gamma": (IO.FLOAT,{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
+            "extra_optimizer_args": (IO.STRING,{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
            },
         }
 
@@ -249,21 +250,21 @@ class OptimizerConfig:
         kwargs["optimizer_args"] = [arg.strip() for arg in extra_optimizer_args.strip().split('|') if arg.strip()]
         return (kwargs,)
 
-class OptimizerConfigAdafactor:
+class OptimizerConfigAdafactor(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "max_grad_norm": ("FLOAT",{"default": 0.0, "min": 0.0, "tooltip": "gradient clipping"}),
+            "max_grad_norm": (IO.FLOAT,{"default": 0.0, "min": 0.0, "tooltip": "gradient clipping"}),
             "lr_scheduler": (["constant", "cosine", "cosine_with_restarts", "polynomial", "constant_with_warmup", "adafactor"], {"default": "constant_with_warmup", "tooltip": "learning rate scheduler"}),
-            "lr_warmup_steps": ("INT",{"default": 0, "min": 0, "tooltip": "learning rate warmup steps"}),
-            "lr_scheduler_num_cycles": ("INT",{"default": 1, "min": 1, "tooltip": "learning rate scheduler num cycles"}),
-            "lr_scheduler_power": ("FLOAT",{"default": 1.0, "min": 0.0, "tooltip": "learning rate scheduler power"}),
-            "relative_step": ("BOOLEAN",{"default": False, "tooltip": "relative step"}),
-            "scale_parameter": ("BOOLEAN",{"default": False, "tooltip": "scale parameter"}),
-            "warmup_init": ("BOOLEAN",{"default": False, "tooltip": "warmup init"}),
-            "clip_threshold": ("FLOAT",{"default": 1.0, "min": 0.0, "tooltip": "clip threshold"}),
-            "min_snr_gamma": ("FLOAT",{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
-            "extra_optimizer_args": ("STRING",{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
+            "lr_warmup_steps": (IO.INT,{"default": 0, "min": 0, "tooltip": "learning rate warmup steps"}),
+            "lr_scheduler_num_cycles": (IO.INT,{"default": 1, "min": 1, "tooltip": "learning rate scheduler num cycles"}),
+            "lr_scheduler_power": (IO.FLOAT,{"default": 1.0, "min": 0.0, "tooltip": "learning rate scheduler power"}),
+            "relative_step": (IO.BOOLEAN,{"default": False, "tooltip": "relative step"}),
+            "scale_parameter": (IO.BOOLEAN,{"default": False, "tooltip": "scale parameter"}),
+            "warmup_init": (IO.BOOLEAN,{"default": False, "tooltip": "warmup init"}),
+            "clip_threshold": (IO.FLOAT,{"default": 1.0, "min": 0.0, "tooltip": "clip threshold"}),
+            "min_snr_gamma": (IO.FLOAT,{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
+            "extra_optimizer_args": (IO.STRING,{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
            },
         }
 
@@ -286,14 +287,14 @@ class OptimizerConfigAdafactor:
 
         return (kwargs,)
 
-class FluxTrainerLossConfig:
+class FluxTrainerLossConfig(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "loss_type": (["l2", "huber","smooth_l1"], {"default": "huber", "tooltip": "The type of loss function to use"}),
             "huber_schedule": (["snr", "exponential", "constant"], {"default": "exponential", "tooltip": "The scheduling method for Huber loss (constant, exponential, or SNR-based). Only used when loss_type is 'huber' or 'smooth_l1'. default is snr"}),
-            "huber_c": ("FLOAT",{"default": 0.25, "min": 0.0, "step": 0.01, "tooltip": "The Huber loss decay parameter. Only used if one of the huber loss modes (huber or smooth l1) is selected with loss_type. default is 0.1"}),
-            "huber_scale": ("FLOAT",{"default": 1.75, "min": 0.0, "step": 0.01, "tooltip": "The Huber loss scale parameter. Only used if one of the huber loss modes (huber or smooth l1) is selected with loss_type. default is 1.0"}),
+            "huber_c": (IO.FLOAT,{"default": 0.25, "min": 0.0, "step": 0.01, "tooltip": "The Huber loss decay parameter. Only used if one of the huber loss modes (huber or smooth l1) is selected with loss_type. default is 0.1"}),
+            "huber_scale": (IO.FLOAT,{"default": 1.75, "min": 0.0, "step": 0.01, "tooltip": "The Huber loss scale parameter. Only used if one of the huber loss modes (huber or smooth l1) is selected with loss_type. default is 1.0"}),
            },
         }
 
@@ -305,20 +306,20 @@ class FluxTrainerLossConfig:
     def create_config(self, **kwargs):
         return (kwargs,)
 
-class OptimizerConfigProdigy:
+class OptimizerConfigProdigy(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "max_grad_norm": ("FLOAT",{"default": 0.0, "min": 0.0, "tooltip": "gradient clipping"}),
+            "max_grad_norm": (IO.FLOAT,{"default": 0.0, "min": 0.0, "tooltip": "gradient clipping"}),
             "lr_scheduler": (["constant", "cosine", "cosine_with_restarts", "polynomial", "constant_with_warmup", "adafactor"], {"default": "constant", "tooltip": "learning rate scheduler"}),
-            "lr_warmup_steps": ("INT",{"default": 0, "min": 0, "tooltip": "learning rate warmup steps"}),
-            "lr_scheduler_num_cycles": ("INT",{"default": 1, "min": 1, "tooltip": "learning rate scheduler num cycles"}),
-            "lr_scheduler_power": ("FLOAT",{"default": 1.0, "min": 0.0, "tooltip": "learning rate scheduler power"}),
-            "weight_decay": ("FLOAT",{"default": 0.0, "step": 0.0001, "tooltip": "weight decay (L2 penalty)"}),
-            "decouple": ("BOOLEAN",{"default": True, "tooltip": "use AdamW style weight decay"}),
-            "use_bias_correction": ("BOOLEAN",{"default": False, "tooltip": "turn on Adam's bias correction"}),
-            "min_snr_gamma": ("FLOAT",{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
-            "extra_optimizer_args": ("STRING",{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
+            "lr_warmup_steps": (IO.INT,{"default": 0, "min": 0, "tooltip": "learning rate warmup steps"}),
+            "lr_scheduler_num_cycles": (IO.INT,{"default": 1, "min": 1, "tooltip": "learning rate scheduler num cycles"}),
+            "lr_scheduler_power": (IO.FLOAT,{"default": 1.0, "min": 0.0, "tooltip": "learning rate scheduler power"}),
+            "weight_decay": (IO.FLOAT,{"default": 0.0, "step": 0.0001, "tooltip": "weight decay (L2 penalty)"}),
+            "decouple": (IO.BOOLEAN,{"default": True, "tooltip": "use AdamW style weight decay"}),
+            "use_bias_correction": (IO.BOOLEAN,{"default": False, "tooltip": "turn on Adam's bias correction"}),
+            "min_snr_gamma": (IO.FLOAT,{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
+            "extra_optimizer_args": (IO.STRING,{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
            },
         }
 
@@ -340,14 +341,14 @@ class OptimizerConfigProdigy:
 
         return (kwargs,)
 
-class TrainNetworkConfig:
+class TrainNetworkConfig(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "network_type": (["lora", "LyCORIS/LoKr", "LyCORIS/Locon", "LyCORIS/LoHa"], {"default": "lora", "tooltip": "network type"}),
             "lycoris_preset": (["full", "full-lin", "attn-mlp", "attn-only"], {"default": "attn-mlp"}),
-            "factor": ("INT",{"default": -1, "min": -1, "max": 16, "step": 1, "tooltip": "LoKr factor"}),
-            "extra_network_args": ("STRING",{"multiline": True, "default": "", "tooltip": "additional network args"}),
+            "factor": (IO.INT,{"default": -1, "min": -1, "max": 16, "step": 1, "tooltip": "LoKr factor"}),
+            "extra_network_args": (IO.STRING,{"multiline": True, "default": "", "tooltip": "additional network args"}),
            },
         }
 
@@ -384,28 +385,28 @@ class TrainNetworkConfig:
 
         return (network_config,)
 
-class OptimizerConfigProdigyPlusScheduleFree:
+class OptimizerConfigProdigyPlusScheduleFree(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "lr": ("FLOAT",{"default": 1.0, "min": 0.0, "step": 1e-7, "tooltip": "Learning rate adjustment parameter. Increases or decreases the Prodigy learning rate."}),
-            "max_grad_norm": ("FLOAT",{"default": 0.0, "min": 0.0, "tooltip": "gradient clipping"}),
-            "prodigy_steps": ("INT",{"default": 0, "min": 0, "tooltip": "Freeze Prodigy stepsize adjustments after a certain optimiser step."}),
-            "d0": ("FLOAT",{"default": 1e-6, "min": 0.0,"step": 1e-7, "tooltip": "initial learning rate"}),
-            "d_coef": ("FLOAT",{"default": 1.0, "min": 0.0, "step": 1e-7, "tooltip": "Coefficient in the expression for the estimate of d (default 1.0). Values such as 0.5 and 2.0 typically work as well. Changing this parameter is the preferred way to tune the method."}),
-            "split_groups": ("BOOLEAN",{"default": True, "tooltip": "Track individual adaptation values for each parameter group."}),
-            #"beta3": ("FLOAT",{"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.0001, "tooltip": " Coefficient for computing the Prodigy stepsize using running averages. If set to None, uses the value of square root of beta2 (default: None)."}),
-            #"beta4": ("FLOAT",{"default": 0, "min": 0.0, "max": 1.0, "step": 0.0001, "tooltip": "Coefficient for updating the learning rate from Prodigy's adaptive stepsize. Smooths out spikes in learning rate adjustments. If set to None, beta1 is used instead. (default 0, which disables smoothing and uses original Prodigy behaviour)."}),
-            "use_bias_correction": ("BOOLEAN",{"default": False, "tooltip": "Use the RAdam variant of schedule-free"}),
-            "min_snr_gamma": ("FLOAT",{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
-            "use_stableadamw": ("BOOLEAN",{"default": True, "tooltip": "Scales parameter updates by the root-mean-square of the normalised gradient, in essence identical to Adafactor's gradient scaling. Set to False if the adaptive learning rate never improves."}),
-            "use_cautious" : ("BOOLEAN",{"default": False, "tooltip": "Experimental. Perform 'cautious' updates, as proposed in https://arxiv.org/pdf/2411.16085. Modifies the update to isolate and boost values that align with the current gradient."}),
-            "use_adopt": ("BOOLEAN",{"default": False, "tooltip": "Experimental. Performs a modified step where the second moment is updated after the parameter update, so as not to include the current gradient in the denominator. This is a partial implementation of ADOPT (https://arxiv.org/abs/2411.02853), as we don't have a first moment to use for the update."}),
-            "use_grams": ("BOOLEAN",{"default": False, "tooltip": "Perform 'grams' updates, as proposed in https://arxiv.org/abs/2412.17107. Modifies the update using sign operations that align with the current gradient. Note that we do not have access to a first moment, so this deviates from the paper (we apply the sign directly to the update). May have a limited effect."}),
-            "stochastic_rounding": ("BOOLEAN",{"default": True, "tooltip": "Use stochastic rounding for bfloat16 weights"}),
-            "use_orthograd": ("BOOLEAN",{"default": False, "tooltip": "Experimental. Updates weights using the component of the gradient that is orthogonal to the current weight direction, as described in (https://arxiv.org/pdf/2501.04697). Can help prevent overfitting and improve generalisation."}),
-            "use_focus ": ("BOOLEAN",{"default": False, "tooltip": "Experimental. Modifies the update step to better handle noise at large step sizes. (https://arxiv.org/abs/2501.12243). This method is incompatible with factorisation, Muon and Adam-atan2."}),
-            "extra_optimizer_args": ("STRING",{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
+            "lr": (IO.FLOAT,{"default": 1.0, "min": 0.0, "step": 1e-7, "tooltip": "Learning rate adjustment parameter. Increases or decreases the Prodigy learning rate."}),
+            "max_grad_norm": (IO.FLOAT,{"default": 0.0, "min": 0.0, "tooltip": "gradient clipping"}),
+            "prodigy_steps": (IO.INT,{"default": 0, "min": 0, "tooltip": "Freeze Prodigy stepsize adjustments after a certain optimiser step."}),
+            "d0": (IO.FLOAT,{"default": 1e-6, "min": 0.0,"step": 1e-7, "tooltip": "initial learning rate"}),
+            "d_coef": (IO.FLOAT,{"default": 1.0, "min": 0.0, "step": 1e-7, "tooltip": "Coefficient in the expression for the estimate of d (default 1.0). Values such as 0.5 and 2.0 typically work as well. Changing this parameter is the preferred way to tune the method."}),
+            "split_groups": (IO.BOOLEAN,{"default": True, "tooltip": "Track individual adaptation values for each parameter group."}),
+            #"beta3": (IO.FLOAT,{"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.0001, "tooltip": " Coefficient for computing the Prodigy stepsize using running averages. If set to None, uses the value of square root of beta2 (default: None)."}),
+            #"beta4": (IO.FLOAT,{"default": 0, "min": 0.0, "max": 1.0, "step": 0.0001, "tooltip": "Coefficient for updating the learning rate from Prodigy's adaptive stepsize. Smooths out spikes in learning rate adjustments. If set to None, beta1 is used instead. (default 0, which disables smoothing and uses original Prodigy behaviour)."}),
+            "use_bias_correction": (IO.BOOLEAN,{"default": False, "tooltip": "Use the RAdam variant of schedule-free"}),
+            "min_snr_gamma": (IO.FLOAT,{"default": 5.0, "min": 0.0, "step": 0.01, "tooltip": "gamma for reducing the weight of high loss timesteps. Lower numbers have stronger effect. 5 is recommended by the paper"}),
+            "use_stableadamw": (IO.BOOLEAN,{"default": True, "tooltip": "Scales parameter updates by the root-mean-square of the normalised gradient, in essence identical to Adafactor's gradient scaling. Set to False if the adaptive learning rate never improves."}),
+            "use_cautious" : (IO.BOOLEAN,{"default": False, "tooltip": "Experimental. Perform 'cautious' updates, as proposed in https://arxiv.org/pdf/2411.16085. Modifies the update to isolate and boost values that align with the current gradient."}),
+            "use_adopt": (IO.BOOLEAN,{"default": False, "tooltip": "Experimental. Performs a modified step where the second moment is updated after the parameter update, so as not to include the current gradient in the denominator. This is a partial implementation of ADOPT (https://arxiv.org/abs/2411.02853), as we don't have a first moment to use for the update."}),
+            "use_grams": (IO.BOOLEAN,{"default": False, "tooltip": "Perform 'grams' updates, as proposed in https://arxiv.org/abs/2412.17107. Modifies the update using sign operations that align with the current gradient. Note that we do not have access to a first moment, so this deviates from the paper (we apply the sign directly to the update). May have a limited effect."}),
+            "stochastic_rounding": (IO.BOOLEAN,{"default": True, "tooltip": "Use stochastic rounding for bfloat16 weights"}),
+            "use_orthograd": (IO.BOOLEAN,{"default": False, "tooltip": "Experimental. Updates weights using the component of the gradient that is orthogonal to the current weight direction, as described in (https://arxiv.org/pdf/2501.04697). Can help prevent overfitting and improve generalisation."}),
+            "use_focus ": (IO.BOOLEAN,{"default": False, "tooltip": "Experimental. Modifies the update step to better handle noise at large step sizes. (https://arxiv.org/abs/2501.12243). This method is incompatible with factorisation, Muon and Adam-atan2."}),
+            "extra_optimizer_args": (IO.STRING,{"multiline": True, "default": "", "tooltip": "additional optimizer args"}),
            },
         }
 
@@ -426,45 +427,45 @@ class OptimizerConfigProdigyPlusScheduleFree:
 
         return (kwargs,)
 
-class InitFluxLoRATraining:
+class InitFluxLoRATraining(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "flux_models": ("TRAIN_FLUX_MODELS",),
             "dataset": ("JSON",),
             "optimizer_settings": ("ARGS",),
-            "output_name": ("STRING", {"default": "flux_lora", "multiline": False}),
-            "output_dir": ("STRING", {"default": "flux_trainer_output", "multiline": False, "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
-            "network_dim": ("INT", {"default": 4, "min": 1, "max": 100000, "step": 1, "tooltip": "network dim"}),
-            "network_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2048.0, "step": 0.01, "tooltip": "network alpha"}),
-            "learning_rate": ("FLOAT", {"default": 4e-4, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "learning rate"}),
-            "max_train_steps": ("INT", {"default": 1500, "min": 1, "max": 100000, "step": 1, "tooltip": "max number of training steps"}),
-            "apply_t5_attn_mask": ("BOOLEAN", {"default": True, "tooltip": "apply t5 attention mask"}),
+            "output_name": (IO.STRING, {"default": "flux_lora", "multiline": False}),
+            "output_dir": (IO.STRING, {"default": "flux_trainer_output", "multiline": False, "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
+            "network_dim": (IO.INT, {"default": 4, "min": 1, "max": 100000, "step": 1, "tooltip": "network dim"}),
+            "network_alpha": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 2048.0, "step": 0.01, "tooltip": "network alpha"}),
+            "learning_rate": (IO.FLOAT, {"default": 4e-4, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "learning rate"}),
+            "max_train_steps": (IO.INT, {"default": 1500, "min": 1, "max": 100000, "step": 1, "tooltip": "max number of training steps"}),
+            "apply_t5_attn_mask": (IO.BOOLEAN, {"default": True, "tooltip": "apply t5 attention mask"}),
             "cache_latents": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
             "cache_text_encoder_outputs": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
-            "blocks_to_swap": ("INT", {"default": 0, "tooltip": "Previously known as split_mode, number of blocks to swap to save memory, default to enable is 18"}),
+            "blocks_to_swap": (IO.INT, {"default": 0, "tooltip": "Previously known as split_mode, number of blocks to swap to save memory, default to enable is 18"}),
             "weighting_scheme": (["logit_normal", "sigma_sqrt", "mode", "cosmap", "none"],),
-            "logit_mean": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "mean to use when using the logit_normal weighting scheme"}),
-            "logit_std": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,"tooltip": "std to use when using the logit_normal weighting scheme"}),
-            "mode_scale": ("FLOAT", {"default": 1.29, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Scale of mode weighting scheme. Only effective when using the mode as the weighting_scheme"}),
+            "logit_mean": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "mean to use when using the logit_normal weighting scheme"}),
+            "logit_std": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,"tooltip": "std to use when using the logit_normal weighting scheme"}),
+            "mode_scale": (IO.FLOAT, {"default": 1.29, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Scale of mode weighting scheme. Only effective when using the mode as the weighting_scheme"}),
             "timestep_sampling": (["sigmoid", "uniform", "sigma", "shift", "flux_shift"], {"tooltip": "Method to sample timesteps: sigma-based, uniform random, sigmoid of random normal and shift of sigmoid (recommend value of 3.1582 for discrete_flow_shift)"}),
-            "sigmoid_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "tooltip": "Scale factor for sigmoid timestep sampling (only used when timestep-sampling is sigmoid"}),
+            "sigmoid_scale": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "tooltip": "Scale factor for sigmoid timestep sampling (only used when timestep-sampling is sigmoid"}),
             "model_prediction_type": (["raw", "additive", "sigma_scaled"], {"tooltip": "How to interpret and process the model prediction: raw (use as is), additive (add to noisy input), sigma_scaled (apply sigma scaling)."}),
-            "guidance_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 32.0, "step": 0.01, "tooltip": "guidance scale, for Flux training should be 1.0"}),
-            "discrete_flow_shift": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001, "tooltip": "for the Euler Discrete Scheduler, default is 3.0"}),
-            "highvram": ("BOOLEAN", {"default": False, "tooltip": "memory mode"}),
-            "fp8_base": ("BOOLEAN", {"default": True, "tooltip": "use fp8 for base model"}),
+            "guidance_scale": (IO.FLOAT, {"default": 1.0, "min": 1.0, "max": 32.0, "step": 0.01, "tooltip": "guidance scale, for Flux training should be 1.0"}),
+            "discrete_flow_shift": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001, "tooltip": "for the Euler Discrete Scheduler, default is 3.0"}),
+            "highvram": (IO.BOOLEAN, {"default": False, "tooltip": "memory mode"}),
+            "fp8_base": (IO.BOOLEAN, {"default": True, "tooltip": "use fp8 for base model"}),
             "gradient_dtype": (["fp32", "fp16", "bf16"], {"default": "fp32", "tooltip": "the actual dtype training uses"}),
             "save_dtype": (["fp32", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2"], {"default": "bf16", "tooltip": "the dtype to save checkpoints as"}),
             "attention_mode": (["sdpa", "xformers", "disabled"], {"default": "sdpa", "tooltip": "memory efficient attention mode"}),
-            "sample_prompts": ("STRING", {"multiline": True, "default": "illustration of a kitten | photograph of a turtle", "tooltip": "validation sample prompts, for multiple prompts, separate by `|`"}),
+            "sample_prompts": (IO.STRING, {"multiline": True, "default": "illustration of a kitten | photograph of a turtle", "tooltip": "validation sample prompts, for multiple prompts, separate by `|`"}),
             },
             "optional": {
-                "additional_args": ("STRING", {"multiline": True, "default": "", "tooltip": "additional args to pass to the training command"}),
+                "additional_args": (IO.STRING, {"multiline": True, "default": "", "tooltip": "additional args to pass to the training command"}),
                 "resume_args": ("ARGS", {"default": "", "tooltip": "resume args to pass to the training command"}),
                 "train_text_encoder": (['disabled', 'clip_l', 'clip_l_fp8', 'clip_l+T5', 'clip_l+T5_fp8'], {"default": 'disabled', "tooltip": "also train the selected text encoders using specified dtype, T5 can not be trained without clip_l"}),
-                "clip_l_lr": ("FLOAT", {"default": 0, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "text encoder learning rate"}),
-                "T5_lr": ("FLOAT", {"default": 0, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "text encoder learning rate"}),
+                "clip_l_lr": (IO.FLOAT, {"default": 0, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "text encoder learning rate"}),
+                "T5_lr": (IO.FLOAT, {"default": 0, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "text encoder learning rate"}),
                 "block_args": ("ARGS", {"default": "", "tooltip": "limit the blocks used in the LoRA"}),
                 "gradient_checkpointing": (["enabled", "enabled_with_cpu_offloading", "disabled"], {"default": "enabled", "tooltip": "use gradient checkpointing"}),
                 "loss_args": ("ARGS", {"default": "", "tooltip": "loss args"}),
@@ -641,43 +642,43 @@ class InitFluxLoRATraining:
         }
         return (trainer, epochs_count, args)
 
-class InitFluxTraining:
+class InitFluxTraining(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "flux_models": ("TRAIN_FLUX_MODELS",),
             "dataset": ("JSON",),
             "optimizer_settings": ("ARGS",),
-            "output_name": ("STRING", {"default": "flux", "multiline": False}),
-            "output_dir": ("STRING", {"default": "flux_trainer_output", "multiline": False, "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
-            "learning_rate": ("FLOAT", {"default": 4e-6, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "learning rate"}),
-            "max_train_steps": ("INT", {"default": 1500, "min": 1, "max": 100000, "step": 1, "tooltip": "max number of training steps"}),
-            "apply_t5_attn_mask": ("BOOLEAN", {"default": True, "tooltip": "apply t5 attention mask"}),
-            "t5xxl_max_token_length": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "dev and LibreFlux uses 512, schnell 256"}),
+            "output_name": (IO.STRING, {"default": "flux", "multiline": False}),
+            "output_dir": (IO.STRING, {"default": "flux_trainer_output", "multiline": False, "tooltip": "path to dataset, root is the 'ComfyUI' folder, with windows portable 'ComfyUI_windows_portable'"}),
+            "learning_rate": (IO.FLOAT, {"default": 4e-6, "min": 0.0, "max": 10.0, "step": 0.000001, "tooltip": "learning rate"}),
+            "max_train_steps": (IO.INT, {"default": 1500, "min": 1, "max": 100000, "step": 1, "tooltip": "max number of training steps"}),
+            "apply_t5_attn_mask": (IO.BOOLEAN, {"default": True, "tooltip": "apply t5 attention mask"}),
+            "t5xxl_max_token_length": (IO.INT, {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "dev and LibreFlux uses 512, schnell 256"}),
             "cache_latents": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
             "cache_text_encoder_outputs": (["disk", "memory", "disabled"], {"tooltip": "caches text encoder outputs"}),
             "weighting_scheme": (["logit_normal", "sigma_sqrt", "mode", "cosmap", "none"],),
-            "logit_mean": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "mean to use when using the logit_normal weighting scheme"}),
-            "logit_std": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,"tooltip": "std to use when using the logit_normal weighting scheme"}),
-            "mode_scale": ("FLOAT", {"default": 1.29, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Scale of mode weighting scheme. Only effective when using the mode as the weighting_scheme"}),
+            "logit_mean": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "mean to use when using the logit_normal weighting scheme"}),
+            "logit_std": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,"tooltip": "std to use when using the logit_normal weighting scheme"}),
+            "mode_scale": (IO.FLOAT, {"default": 1.29, "min": 0.0, "max": 10.0, "step": 0.01, "tooltip": "Scale of mode weighting scheme. Only effective when using the mode as the weighting_scheme"}),
             "loss_type": (["l1", "l2", "huber", "smooth_l1"], {"default": "l2", "tooltip": "loss type"}),
             "timestep_sampling": (["sigmoid", "uniform", "sigma", "shift", "flux_shift"], {"tooltip": "Method to sample timesteps: sigma-based, uniform random, sigmoid of random normal and shift of sigmoid (recommend value of 3.1582 for discrete_flow_shift)"}),
-            "sigmoid_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "tooltip": "Scale factor for sigmoid timestep sampling (only used when timestep-sampling is sigmoid"}),
+            "sigmoid_scale": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "tooltip": "Scale factor for sigmoid timestep sampling (only used when timestep-sampling is sigmoid"}),
             "model_prediction_type": (["raw", "additive", "sigma_scaled"], {"tooltip": "How to interpret and process the model prediction: raw (use as is), additive (add to noisy input), sigma_scaled (apply sigma scaling)"}),
-            "cpu_offload_checkpointing": ("BOOLEAN", {"default": True, "tooltip": "offload the gradient checkpointing to CPU. This reduces VRAM usage for about 2GB"}),
+            "cpu_offload_checkpointing": (IO.BOOLEAN, {"default": True, "tooltip": "offload the gradient checkpointing to CPU. This reduces VRAM usage for about 2GB"}),
             "optimizer_fusing": (['fused_backward_pass', 'blockwise_fused_optimizers'], {"tooltip": "reduces memory use"}),
-            "blocks_to_swap": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1, "tooltip": "Sets the number of blocks (~640MB) to swap during the forward and backward passes, increasing this number lowers the overall VRAM used during training at the expense of training speed (s/it)."}),
-            "guidance_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 32.0, "step": 0.01, "tooltip": "guidance scale"}),
-            "discrete_flow_shift": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001, "tooltip": "for the Euler Discrete Scheduler, default is 3.0"}),
-            "highvram": ("BOOLEAN", {"default": False, "tooltip": "memory mode"}),
-            "fp8_base": ("BOOLEAN", {"default": False, "tooltip": "use fp8 for base model"}),
+            "blocks_to_swap": (IO.INT, {"default": 0, "min": 0, "max": 100, "step": 1, "tooltip": "Sets the number of blocks (~640MB) to swap during the forward and backward passes, increasing this number lowers the overall VRAM used during training at the expense of training speed (s/it)."}),
+            "guidance_scale": (IO.FLOAT, {"default": 1.0, "min": 1.0, "max": 32.0, "step": 0.01, "tooltip": "guidance scale"}),
+            "discrete_flow_shift": (IO.FLOAT, {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001, "tooltip": "for the Euler Discrete Scheduler, default is 3.0"}),
+            "highvram": (IO.BOOLEAN, {"default": False, "tooltip": "memory mode"}),
+            "fp8_base": (IO.BOOLEAN, {"default": False, "tooltip": "use fp8 for base model"}),
             "gradient_dtype": (["fp32", "fp16", "bf16"], {"default": "bf16", "tooltip": "to use the full fp16/bf16 training"}),
             "save_dtype": (["fp32", "fp16", "bf16", "fp8_e4m3fn"], {"default": "bf16", "tooltip": "the dtype to save checkpoints as"}),
             "attention_mode": (["sdpa", "xformers", "disabled"], {"default": "sdpa", "tooltip": "memory efficient attention mode"}),
-            "sample_prompts": ("STRING", {"multiline": True, "default": "illustration of a kitten | photograph of a turtle", "tooltip": "validation sample prompts, for multiple prompts, separate by `|`"}),
+            "sample_prompts": (IO.STRING, {"multiline": True, "default": "illustration of a kitten | photograph of a turtle", "tooltip": "validation sample prompts, for multiple prompts, separate by `|`"}),
             },
             "optional": {
-                "additional_args": ("STRING", {"multiline": True, "default": "", "tooltip": "additional args to pass to the training command"}),
+                "additional_args": (IO.STRING, {"multiline": True, "default": "", "tooltip": "additional args to pass to the training command"}),
                 "resume_args": ("ARGS", {"default": "", "tooltip": "resume args to pass to the training command"}),
             },
         }
@@ -804,16 +805,16 @@ class InitFluxTraining:
         }
         return (trainer, epochs_count, args)
 
-class InitFluxTrainingFromPreset:
+class InitFluxTrainingFromPreset(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "flux_models": ("TRAIN_FLUX_MODELS",),
             "dataset_settings": ("TOML_DATASET",),
             "preset_args": ("KOHYA_ARGS",),
-            "output_name": ("STRING", {"default": "flux", "multiline": False}),
-            "output_dir": ("STRING", {"default": "flux_trainer_output", "multiline": False, "tooltip": "output directory, root is ComfyUI folder"}),
-            "sample_prompts": ("STRING", {"multiline": True, "default": "illustration of a kitten | photograph of a turtle", "tooltip": "validation sample prompts, for multiple prompts, separate by `|`"}),
+            "output_name": (IO.STRING, {"default": "flux", "multiline": False}),
+            "output_dir": (IO.STRING, {"default": "flux_trainer_output", "multiline": False, "tooltip": "output directory, root is ComfyUI folder"}),
+            "sample_prompts": (IO.STRING, {"multiline": True, "default": "illustration of a kitten | photograph of a turtle", "tooltip": "validation sample prompts, for multiple prompts, separate by `|`"}),
             },
         }
 
@@ -880,12 +881,12 @@ class InitFluxTrainingFromPreset:
         }
         return (trainer, epochs_count, final_output_path, args)
 
-class FluxTrainLoop:
+class FluxTrainLoop(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
-            "steps": ("INT", {"default": 1, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
+            "steps": (IO.INT, {"default": 1, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
              },
         }
 
@@ -923,13 +924,13 @@ class FluxTrainLoop:
             }
         return (trainer, network_trainer.global_step)
 
-class FluxTrainAndValidateLoop:
+class FluxTrainAndValidateLoop(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(cls):
+    def INPUT_TYPES(cls) -> InputTypeDict:
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
-            "validate_at_steps": ("INT", {"default": 250, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
-            "save_at_steps": ("INT", {"default": 250, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
+            "validate_at_steps": (IO.INT, {"default": 250, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
+            "save_at_steps": (IO.INT, {"default": 250, "min": 1, "max": 10000, "step": 1, "tooltip": "the step point in training to validate/save"}),
             },
              "optional": {
                 "validation_settings": ("VALSETTINGS",),
@@ -997,13 +998,13 @@ class FluxTrainAndValidateLoop:
         network_trainer.optimizer_train_fn()
         print("Saving at step:", network_trainer.global_step)
 
-class FluxTrainSave:
+class FluxTrainSave(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
-            "save_state": ("BOOLEAN", {"default": False, "tooltip": "save the whole model state as well"}),
-            "copy_to_comfy_lora_folder": ("BOOLEAN", {"default": False, "tooltip": "copy the lora model to the comfy lora folder"}),
+            "save_state": (IO.BOOLEAN, {"default": False, "tooltip": "save the whole model state as well"}),
+            "copy_to_comfy_lora_folder": (IO.BOOLEAN, {"default": False, "tooltip": "copy the lora model to the comfy lora folder"}),
              },
         }
 
@@ -1038,13 +1039,13 @@ class FluxTrainSave:
 
         return (network_trainer, lora_path, global_step)
 
-class FluxTrainSaveModel:
+class FluxTrainSaveModel(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
-            "copy_to_comfy_model_folder": ("BOOLEAN", {"default": False, "tooltip": "copy the lora model to the comfy lora folder"}),
-            "end_training": ("BOOLEAN", {"default": False, "tooltip": "end the training"}),
+            "copy_to_comfy_model_folder": (IO.BOOLEAN, {"default": False, "tooltip": "copy the lora model to the comfy lora folder"}),
+            "end_training": (IO.BOOLEAN, {"default": False, "tooltip": "end the training"}),
              },
         }
 
@@ -1082,12 +1083,12 @@ class FluxTrainSaveModel:
 
         return (network_trainer, model_path, global_step)
 
-class FluxTrainEnd:
+class FluxTrainEnd(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
-            "save_state": ("BOOLEAN", {"default": True}),
+            "save_state": (IO.BOOLEAN, {"default": True}),
              },
         }
 
@@ -1129,12 +1130,12 @@ class FluxTrainEnd:
 
         return (final_lora_name, metadata, final_lora_path)
 
-class FluxTrainResume:
+class FluxTrainResume(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "load_state_path": ("STRING", {"default": "", "multiline": True, "tooltip": "path to load state from"}),
-            "skip_until_initial_step" : ("BOOLEAN", {"default": False}),
+            "load_state_path": (IO.STRING, {"default": "", "multiline": True, "tooltip": "path to load state from"}),
+            "skip_until_initial_step" : (IO.BOOLEAN, {"default": False}),
              },
         }
 
@@ -1151,11 +1152,11 @@ class FluxTrainResume:
 
         return (resume_args, )
 
-class FluxTrainBlockSelect:
+class FluxTrainBlockSelect(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "include": ("STRING", {"default": "lora_unet_single_blocks_20_linear2", "multiline": True, "tooltip": "blocks to include in the LoRA network, to select multiple blocks either input them as "}),
+            "include": (IO.STRING, {"default": "lora_unet_single_blocks_20_linear2", "multiline": True, "tooltip": "blocks to include in the LoRA network, to select multiple blocks either input them as "}),
              },
         }
 
@@ -1205,18 +1206,18 @@ class FluxTrainBlockSelect:
 
         return (block_args, )
 
-class FluxTrainValidationSettings:
+class FluxTrainValidationSettings(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
-            "steps": ("INT", {"default": 20, "min": 1, "max": 256, "step": 1, "tooltip": "sampling steps"}),
-            "width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image width"}),
-            "height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image height"}),
-            "guidance_scale": ("FLOAT", {"default": 3.5, "min": 1.0, "max": 32.0, "step": 0.05, "tooltip": "guidance scale"}),
-            "seed": ("INT", {"default": 42,"min": 0, "max": 0xffffffffffffffff, "step": 1}),
-            "shift": ("BOOLEAN", {"default": True, "tooltip": "shift the schedule to favor high timesteps for higher signal images"}),
-            "base_shift": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 10.0, "step": 0.01}),
-            "max_shift": ("FLOAT", {"default": 1.15, "min": 0.0, "max": 10.0, "step": 0.01}),
+            "steps": (IO.INT, {"default": 20, "min": 1, "max": 256, "step": 1, "tooltip": "sampling steps"}),
+            "width": (IO.INT, {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image width"}),
+            "height": (IO.INT, {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image height"}),
+            "guidance_scale": (IO.FLOAT, {"default": 3.5, "min": 1.0, "max": 32.0, "step": 0.05, "tooltip": "guidance scale"}),
+            "seed": (IO.INT, {"default": 42,"min": 0, "max": 0xffffffffffffffff, "step": 1}),
+            "shift": (IO.BOOLEAN, {"default": True, "tooltip": "shift the schedule to favor high timesteps for higher signal images"}),
+            "base_shift": (IO.FLOAT, {"default": 0.5, "min": 0.0, "max": 10.0, "step": 0.01}),
+            "max_shift": (IO.FLOAT, {"default": 1.15, "min": 0.0, "max": 10.0, "step": 0.01}),
             },
         }
 
@@ -1231,9 +1232,9 @@ class FluxTrainValidationSettings:
 
         return (validation_settings,)
 
-class FluxTrainValidate:
+class FluxTrainValidate(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {
             "required": {
                 "network_trainer": ("NETWORKTRAINER",),
@@ -1267,17 +1268,17 @@ class FluxTrainValidate:
         }
         return (trainer, (0.5 * (image_tensors + 1.0)).cpu().float(),)
 
-class VisualizeLoss:
+class VisualizeLoss(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "network_trainer": ("NETWORKTRAINER",),
             "plot_style": (plt.style.available,{"default": 'default', "tooltip": "matplotlib plot style"}),
-            "window_size": ("INT", {"default": 100, "min": 0, "max": 10000, "step": 1, "tooltip": "the window size of the moving average"}),
-            "normalize_y": ("BOOLEAN", {"default": True, "tooltip": "normalize the y-axis to 0"}),
-            "width": ("INT", {"default": 768, "min": 256, "max": 4096, "step": 2, "tooltip": "width of the plot in pixels"}),
-            "height": ("INT", {"default": 512, "min": 256, "max": 4096, "step": 2, "tooltip": "height of the plot in pixels"}),
-            "log_scale": ("BOOLEAN", {"default": False, "tooltip": "use log scale on the y-axis"}),
+            "window_size": (IO.INT, {"default": 100, "min": 0, "max": 10000, "step": 1, "tooltip": "the window size of the moving average"}),
+            "normalize_y": (IO.BOOLEAN, {"default": True, "tooltip": "normalize the y-axis to 0"}),
+            "width": (IO.INT, {"default": 768, "min": 256, "max": 4096, "step": 2, "tooltip": "width of the plot in pixels"}),
+            "height": (IO.INT, {"default": 512, "min": 256, "max": 4096, "step": 2, "tooltip": "height of the plot in pixels"}),
+            "log_scale": (IO.BOOLEAN, {"default": False, "tooltip": "use log scale on the y-axis"}),
              },
         }
 
@@ -1327,21 +1328,21 @@ class VisualizeLoss:
 
         return image_tensor, loss_values,
 
-class FluxKohyaInferenceSampler:
+class FluxKohyaInferenceSampler(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {"required": {
             "flux_models": ("TRAIN_FLUX_MODELS",),
             "lora_name": (folder_paths.get_filename_list("loras"), {"tooltip": "The name of the LoRA."}),
             "lora_method": (["apply", "merge"], {"tooltip": "whether to apply or merge the lora weights"}),
-            "steps": ("INT", {"default": 20, "min": 1, "max": 256, "step": 1, "tooltip": "sampling steps"}),
-            "width": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image width"}),
-            "height": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image height"}),
-            "guidance_scale": ("FLOAT", {"default": 3.5, "min": 1.0, "max": 32.0, "step": 0.05, "tooltip": "guidance scale"}),
-            "seed": ("INT", {"default": 42,"min": 0, "max": 0xffffffffffffffff, "step": 1}),
-            "use_fp8": ("BOOLEAN", {"default": True, "tooltip": "use fp8 weights"}),
-            "apply_t5_attn_mask": ("BOOLEAN", {"default": True, "tooltip": "use t5 attention mask"}),
-            "prompt": ("STRING", {"multiline": True, "default": "illustration of a kitten", "tooltip": "prompt"}),
+            "steps": (IO.INT, {"default": 20, "min": 1, "max": 256, "step": 1, "tooltip": "sampling steps"}),
+            "width": (IO.INT, {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image width"}),
+            "height": (IO.INT, {"default": 512, "min": 64, "max": 4096, "step": 8, "tooltip": "image height"}),
+            "guidance_scale": (IO.FLOAT, {"default": 3.5, "min": 1.0, "max": 32.0, "step": 0.05, "tooltip": "guidance scale"}),
+            "seed": (IO.INT, {"default": 42,"min": 0, "max": 0xffffffffffffffff, "step": 1}),
+            "use_fp8": (IO.BOOLEAN, {"default": True, "tooltip": "use fp8 weights"}),
+            "apply_t5_attn_mask": (IO.BOOLEAN, {"default": True, "tooltip": "use t5 attention mask"}),
+            "prompt": (IO.STRING, {"multiline": True, "default": "illustration of a kitten", "tooltip": "prompt"}),
 
             },
         }
@@ -1603,19 +1604,19 @@ class FluxKohyaInferenceSampler:
 
         return ((0.5 * (x + 1.0)).cpu().float(),)
 
-class UploadToHuggingFace:
+class UploadToHuggingFace(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {
             "required": {
                 "network_trainer": ("NETWORKTRAINER",),
-                "source_path": ("STRING", {"default": ""}),
-                "repo_id": ("STRING",{"default": ""}),
-                "revision": ("STRING", {"default": ""}),
-                "private": ("BOOLEAN", {"default": True, "tooltip": "If creating a new repo, leave it private"}),
+                "source_path": (IO.STRING, {"default": ""}),
+                "repo_id": (IO.STRING,{"default": ""}),
+                "revision": (IO.STRING, {"default": ""}),
+                "private": (IO.BOOLEAN, {"default": True, "tooltip": "If creating a new repo, leave it private"}),
              },
              "optional": {
-                "token": ("STRING", {"default": "","tooltip":"DO NOT LEAVE IN THE NODE or it might save in metadata, can also use the hf_token.json"}),
+                "token": (IO.STRING, {"default": "","tooltip":"DO NOT LEAVE IN THE NODE or it might save in metadata, can also use the hf_token.json"}),
              }
         }
 
@@ -1700,21 +1701,21 @@ class UploadToHuggingFace:
 
             return (network_trainer, status,)
 
-class ExtractFluxLoRA:
+class ExtractFluxLoRA(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {
             "required": {
                 "original_model": (folder_paths.get_filename_list("unet"), ),
                 "finetuned_model": (folder_paths.get_filename_list("unet"), ),
-                "output_path": ("STRING", {"default": f"{str(os.path.join(folder_paths.models_dir, 'loras', 'Flux'))}"}),
-                "dim": ("INT", {"default": 4, "min": 2, "max": 1024, "step": 2, "tooltip": "LoRA rank"}),
+                "output_path": (IO.STRING, {"default": f"{str(os.path.join(folder_paths.models_dir, 'loras', 'Flux'))}"}),
+                "dim": (IO.INT, {"default": 4, "min": 2, "max": 1024, "step": 2, "tooltip": "LoRA rank"}),
                 "save_dtype": (["fp32", "fp16", "bf16", "fp8_e4m3fn", "fp8_e5m2"], {"default": "bf16", "tooltip": "the dtype to save the LoRA as"}),
                 "load_device": (["cpu", "cuda"], {"default": "cuda", "tooltip": "the device to load the model to"}),
                 "store_device": (["cpu", "cuda"], {"default": "cpu", "tooltip": "the device to store the LoRA as"}),
-                "clamp_quantile": ("FLOAT", {"default": 0.99, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "clamp quantile"}),
-                "metadata": ("BOOLEAN", {"default": True, "tooltip": "build metadata"}),
-                "mem_eff_safe_open": ("BOOLEAN", {"default": False, "tooltip": "memory efficient loading"}),
+                "clamp_quantile": (IO.FLOAT, {"default": 0.99, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "clamp quantile"}),
+                "metadata": (IO.BOOLEAN, {"default": True, "tooltip": "build metadata"}),
+                "mem_eff_safe_open": (IO.BOOLEAN, {"default": False, "tooltip": "memory efficient loading"}),
              },
         }
 
@@ -1751,20 +1752,23 @@ class ExtractFluxLoRA:
 
         return (outpath,)
 
-class ExtractQuantFluxLoRA:
+class ExtractQuantFluxLoRA(ComfyNodeABC):
     @classmethod
-    def INPUT_TYPES(s):
+    def INPUT_TYPES(s) -> InputTypeDict:
         return {
             "required": {
                 "original_model": (folder_paths.get_filename_list("unet"), ),
-                "output_path": ("STRING", {"default": f"{str(os.path.join(folder_paths.models_dir, 'loras', 'Flux'))}"}),
-                "dim": ("INT", {"default": 4, "min": 2, "max": 1024, "step": 2, "tooltip": "LoRA rank"}),
+                "output_path": (IO.STRING, {"default": f"{str(os.path.join(folder_paths.models_dir, 'loras', 'Flux'))}"}),
+                "dim": (IO.INT, {"default": 4, "min": 2, "max": 1024, "step": 2, "tooltip": "LoRA rank"}),
                 "save_dtype": (["fp32", "fp16", "bf16"], {"default": "bf16", "tooltip": "the dtype to save the LoRA as"}),
                 "load_device": (["cpu", "cuda"], {"default": "cuda", "tooltip": "the device to load the model to"}),
                 "store_device": (["cpu", "cuda"], {"default": "cpu", "tooltip": "the device to store the LoRA as"}),
-                "outlier_quantile": ("FLOAT", {"default": 0.995, "min": 0.0, "max": 1.0, "step": 0.001, "tooltip": "outlier quantile"}),
-                "metadata": ("BOOLEAN", {"default": True, "tooltip": "build metadata"}),
-                "mem_eff_safe_open": ("BOOLEAN", {"default": False, "tooltip": "memory efficient loading"}),
+                "outlier_quantile": (IO.FLOAT, {"default": 0.995, "min": 0.0, "max": 1.0, "step": 0.001, "tooltip": "outlier quantile"}),
+                "scaling_mode": (["vector", "tensor"], {"default": "tensor", "tooltip": "the scaling mode to use when calculating"}),
+                "fp8_dtype_str": (["e4m3fn", "e5m2"], {"default": "e4m3fn", "tooltip": "the quant dtype"}),
+                "seed": (IO.INT, {"default": 0, "min": 0, "max": 2147483647}),
+                "metadata": (IO.BOOLEAN, {"default": True, "tooltip": "build metadata"}),
+                "mem_eff_safe_open": (IO.BOOLEAN, {"default": False, "tooltip": "memory efficient loading"}),
              },
         }
 
@@ -1773,7 +1777,7 @@ class ExtractQuantFluxLoRA:
     FUNCTION = "extract"
     CATEGORY = "FluxTrainer"
 
-    def extract(self, original_model, output_path, dim, save_dtype, load_device, store_device, outlier_quantile, metadata, mem_eff_safe_open):
+    def extract(self, original_model, output_path, dim, save_dtype, load_device, store_device, outlier_quantile, scaling_mode, fp8_dtype_str, seed, metadata, mem_eff_safe_open):
         from .flux_extract_lora import quant_svd
         transformer_path = folder_paths.get_full_path("unet", original_model)
         print(output_path)
